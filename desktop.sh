@@ -110,7 +110,7 @@ mkfs.fat -F 32 -s 2 $ESP &>/dev/null
 
 # Creating a LUKS Container for the root partition.
 echo "Creating LUKS Container for the root partition."
-cryptsetup luksFormat --hash sha512 $cryptroot
+cryptsetup luksFormat --type luks1 $cryptroot
 echo "Opening the newly created LUKS Container."
 cryptsetup open $cryptroot cryptroot
 BTRFS="/dev/mapper/cryptroot"
@@ -138,8 +138,6 @@ btrfs su cr /mnt/@/var_tmp &>/dev/null
 btrfs su cr /mnt/@/var_spool &>/dev/null
 btrfs su cr /mnt/@/var_lib_libvirt_images &>/dev/null
 btrfs su cr /mnt/@/var_lib_machines &>/dev/null
-btrfs su cr /mnt/@/var_lib_gdm &>/dev/null
-btrfs su cr /mnt/@/var_lib_AccountsService &>/dev/null
 btrfs su cr /mnt/@/cryptkey &>/dev/null
 
 chattr +C /mnt/@/boot
@@ -152,8 +150,6 @@ chattr +C /mnt/@/var_tmp
 chattr +C /mnt/@/var_spool
 chattr +C /mnt/@/var_lib_libvirt_images
 chattr +C /mnt/@/var_lib_machines
-chattr +C /mnt/@/var_lib_gdm
-chattr +C /mnt/@/var_lib_AccountsService
 chattr +C /mnt/@/cryptkey
 
 #Set the default BTRFS Subvol to Snapshot 1 before pacstrapping
@@ -176,7 +172,7 @@ chmod 600 /mnt/@/.snapshots/1/info.xml
 umount /mnt
 echo "Mounting the newly created subvolumes."
 mount -o ssd,noatime,space_cache,compress=zstd:15 $BTRFS /mnt
-mkdir -p /mnt/{boot,root,home,.snapshots,srv,tmp,/var/log,/var/crash,/var/cache,/var/tmp,/var/spool,/var/lib/libvirt/images,/var/lib/machines,/var/lib/gdm,/var/lib/AccountsService,/cryptkey}
+mkdir -p /mnt/{boot,root,home,.snapshots,srv,tmp,/var/log,/var/crash,/var/cache,/var/tmp,/var/spool,/var/lib/libvirt/images,/var/lib/machines,/cryptkey}
 mount -o ssd,noatime,space_cache=v2,autodefrag,compress=zstd:15,discard=async,nodev,nosuid,noexec,subvol=@/boot $BTRFS /mnt/boot
 mount -o ssd,noatime,space_cache=v2,autodefrag,compress=zstd:15,discard=async,nodev,nosuid,subvol=@/root $BTRFS /mnt/root
 mount -o ssd,noatime,space_cache=v2,autodefrag,compress=zstd:15,discard=async,nodev,nosuid,subvol=@/home $BTRFS /mnt/home
@@ -199,10 +195,6 @@ mount -o ssd,noatime,space_cache=v2,autodefrag,compress=zstd:15,discard=async,no
 mount -o ssd,noatime,space_cache=v2,autodefrag,compress=zstd:15,discard=async,nodatacow,nodev,nosuid,noexec,subvol=@/var_lib_libvirt_images $BTRFS /mnt/var/lib/libvirt/images
 mount -o ssd,noatime,space_cache=v2,autodefrag,compress=zstd:15,discard=async,nodatacow,nodev,nosuid,noexec,subvol=@/var_lib_machines $BTRFS /mnt/var/lib/machines
 
-# GNOME requires /var/lib/gdm and /var/lib/AccountsService to be writeable when booting into a readonly snapshot. Thus we sadly have to split them.
-mount -o ssd,noatime,space_cache=v2,autodefrag,compress=zstd:15,discard=async,nodatacow,nodev,nosuid,noexec,subvol=@/var_lib_gdm $BTRFS /mnt/var/lib/gdm
-mount -o ssd,noatime,space_cache=v2,autodefrag,compress=zstd:15,discard=async,nodatacow,nodev,nosuid,noexec,subvol=@/var_lib_AccountsService $BTRFS /mnt/var/lib/AccountsService
-
 # The encryption is splitted as we do not want to include it in the backup with snap-pac.
 mount -o ssd,noatime,space_cache=v2,autodefrag,compress=zstd:15,discard=async,nodatacow,nodev,nosuid,noexec,subvol=@/cryptkey $BTRFS /mnt/cryptkey
 
@@ -212,7 +204,7 @@ mount -o nodev,nosuid,noexec $ESP /mnt/boot/efi
 
 # Pacstrap (setting up a base sytem onto the new root).
 echo "Installing the base system (it may take a while)."
-pacstrap /mnt base ${kernel} ${microcode} linux-firmware base-devel grub-btrfs snapper snap-pac efibootmgr sudo networkmanager apparmor python-psutil python-notify2 nano gdm gnome-control-center gnome-terminal gnome-tweaks nautilus pipewire-pulse pipewire-alsa pipewire-jack flatpak firewalld zram-generator adobe-source-han-sans-otc-fonts adobe-source-han-serif-otc-fonts gnu-free-fonts reflector mlocate man-db chrony sbctl
+pacstrap /mnt base ${kernel} ${microcode} linux-firmware grub grub-btrfs snapper snap-pac efibootmgr sudo networkmanager apparmor python-psutil python-notify2 vim pipewire-pulse pipewire-alsa pipewire-jack flatpak firewalld zram-generator reflector mlocate man-db chrony sbctl
 
 # Routing jack2 through PipeWire.
 echo "/usr/lib/pipewire-0.3/jack" > /mnt/etc/ld.so.conf.d/pipewire-jack.conf
@@ -351,11 +343,6 @@ arch-chroot /mnt /bin/bash -e <<EOF
     echo "Generating locales."
     locale-gen &>/dev/null
 
-		#Installing grub-improved-luks2-git
-		git clone https://aur.archlinux.org/grub-improved-luks2-git.git
-		cd grub-improved-luks2-git
-		makepkg --syncdeps --install
-
     # Generating a new initramfs.
     echo "Creating a new initramfs."
     chmod 600 /boot/initramfs-linux* &>/dev/null
@@ -372,7 +359,7 @@ arch-chroot /mnt /bin/bash -e <<EOF
 
     # Installing GRUB.
     echo "Installing GRUB on /boot."
-    grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB --modules="normal test efi_gop efi_uga search echo linux all_video gfxmenu gfxterm_background gfxterm_menu gfxterm loadenv configfile gzio part_gpt cryptodisk luks gcry_rijndael gcry_sha256 btrfs" --disable-shim-lock &>/dev/null
+    grub-install --target=x86_64-efi --removable --efi-directory=/boot/efi --bootloader-id=GRUB --modules="normal test efi_gop efi_uga search echo linux all_video gfxmenu gfxterm_background gfxterm_menu gfxterm loadenv configfile gzio part_gpt cryptodisk luks gcry_rijndael gcry_sha256 btrfs" --disable-shim-lock &>/dev/null
 
     # Creating grub config file.
     echo "Creating GRUB config file."
@@ -422,9 +409,6 @@ systemctl enable fstrim.timer --root=/mnt &>/dev/null
 
 # Enabling NetworkManager.
 systemctl enable NetworkManager --root=/mnt &>/dev/null
-
-# Enabling GDM.
-systemctl enable gdm --root=/mnt &>/dev/null
 
 # Enabling AppArmor.
 echo "Enabling AppArmor."
