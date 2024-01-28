@@ -27,6 +27,24 @@ kernel_selector () {
     esac
 }
 
+lukspass_selector () {
+    input_print "Please enter a password for the LUKS container (you're not going to see the password): "
+    read -r -s password
+    if [[ -z "$password" ]]; then
+        echo
+        error_print "You need to enter a password for the LUKS Container, please try again."
+        return 1
+    fi
+    echo
+    input_print "Please enter the password for the LUKS container again (you're not going to see the password): "
+    read -r -s password2
+    echo
+    if [[ "$password" != "$password2" ]]; then
+        error_print "Passwords don't match, please try again."
+        return 1
+    fi
+    return 0
+}
 
 
 ## user input ##
@@ -47,6 +65,9 @@ if [[ ! ("$response" =~ ^(yes|y)$) ]]; then
     echo "Quitting."
     exit
 fi
+
+# Setting up LUKS password.
+until lukspass_selector; do : ; done
 
 #select kernel
 kernel_selector
@@ -89,16 +110,25 @@ else
 fi
 
 # Creating a new partition scheme.
-echo "Creating new partition scheme on $DISK."
+# echo "Creating new partition scheme on $DISK."
+# parted -s "$DISK" \
+#     mklabel gpt \
+#     mkpart ESP fat32 1MiB 128MiB \
+#     set 1 esp on \
+#     mkpart cryptroot 128MiB 100% \
+info_print "Creating the partitions on $DISK."
 parted -s "$DISK" \
     mklabel gpt \
-    mkpart ESP fat32 1MiB 128MiB \
+    mkpart ESP fat32 1MiB 1025MiB \
     set 1 esp on \
-    mkpart cryptroot 128MiB 100% \
+    mkpart CRYPTROOT 1025MiB 100% \
+ESP="/dev/disk/by-partlabel/ESP"
+CRYPTROOT="/dev/disk/by-partlabel/CRYPTROOT"
 
-sleep 0.1
-ESP="/dev/$(lsblk $DISK -o NAME,PARTLABEL | grep ESP| cut -d " " -f1 | cut -c7-)"
-cryptroot="/dev/$(lsblk $DISK -o NAME,PARTLABEL | grep cryptroot | cut -d " " -f1 | cut -c7-)"
+
+# sleep 0.1
+# ESP="/dev/$(lsblk $DISK -o NAME,PARTLABEL | grep ESP| cut -d " " -f1 | cut -c7-)"
+# cryptroot="/dev/$(lsblk $DISK -o NAME,PARTLABEL | grep cryptroot | cut -d " " -f1 | cut -c7-)"
 
 # Informing the Kernel of the changes.
 echo "Informing the Kernel about the disk changes."
@@ -106,15 +136,19 @@ partprobe "$DISK"
 
 # Formatting the ESP as FAT32.
 echo "Formatting the EFI Partition as FAT32."
-mkfs.fat -F 32 -s 2 $ESP &>/dev/null
+mkfs.fat -F 32 $ESP &>/dev/null
 
 # Creating a LUKS Container for the root partition.
-echo "Creating LUKS Container for the root partition."
-cryptsetup luksFormat --type luks1 $cryptroot
-echo "Opening the newly created LUKS Container."
-cryptsetup open $cryptroot cryptroot
-BTRFS="/dev/mapper/cryptroot"
+# echo "Creating LUKS Container for the root partition."
+# cryptsetup luksFormat --type luks1 $cryptroot
+# echo "Opening the newly created LUKS Container."
+# cryptsetup open $cryptroot cryptroot
+# BTRFS="/dev/mapper/cryptroot"
 
+info_print "Creating LUKS Container for the root partition."
+echo -n "$password" | cryptsetup luksFormat "$CRYPTROOT" -d - &>/dev/null
+echo -n "$password" | cryptsetup open "$CRYPTROOT" cryptroot -d - 
+BTRFS="/dev/mapper/cryptroot"
 # Formatting the LUKS Container as BTRFS.
 echo "Formatting the LUKS container as BTRFS."
 mkfs.btrfs $BTRFS &>/dev/null
@@ -126,7 +160,6 @@ btrfs su cr /mnt/@ &>/dev/null
 btrfs su cr /mnt/@/.snapshots &>/dev/null
 mkdir -p /mnt/@/.snapshots/1 &>/dev/null
 btrfs su cr /mnt/@/.snapshots/1/snapshot &>/dev/null
-btrfs su cr /mnt/@/boot/ &>/dev/null
 btrfs su cr /mnt/@/home &>/dev/null
 btrfs su cr /mnt/@/root &>/dev/null
 btrfs su cr /mnt/@/srv &>/dev/null
@@ -138,9 +171,7 @@ btrfs su cr /mnt/@/var_tmp &>/dev/null
 btrfs su cr /mnt/@/var_spool &>/dev/null
 btrfs su cr /mnt/@/var_lib_libvirt_images &>/dev/null
 btrfs su cr /mnt/@/var_lib_machines &>/dev/null
-btrfs su cr /mnt/@/cryptkey &>/dev/null
 
-chattr +C /mnt/@/boot
 chattr +C /mnt/@/srv
 chattr +C /mnt/@/var_log
 chattr +C /mnt/@/var_log_journal
@@ -150,7 +181,6 @@ chattr +C /mnt/@/var_tmp
 chattr +C /mnt/@/var_spool
 chattr +C /mnt/@/var_lib_libvirt_images
 chattr +C /mnt/@/var_lib_machines
-chattr +C /mnt/@/cryptkey
 
 #Set the default BTRFS Subvol to Snapshot 1 before pacstrapping
 btrfs subvolume set-default "$(btrfs subvolume list /mnt | grep "@/.snapshots/1/snapshot" | grep -oP '(?<=ID )[0-9]+')" /mnt
@@ -172,8 +202,7 @@ chmod 600 /mnt/@/.snapshots/1/info.xml
 umount /mnt
 echo "Mounting the newly created subvolumes."
 mount -o ssd,noatime,space_cache,compress=zstd:15 $BTRFS /mnt
-mkdir -p /mnt/{boot,root,home,.snapshots,srv,tmp,/var/log,/var/crash,/var/cache,/var/tmp,/var/spool,/var/lib/libvirt/images,/var/lib/machines,/cryptkey}
-mount -o ssd,noatime,space_cache=v2,autodefrag,compress=zstd:15,discard=async,nodev,nosuid,noexec,subvol=@/boot $BTRFS /mnt/boot
+mkdir -p /mnt/{root,home,.snapshots,srv,tmp,/var/log,/var/crash,/var/cache,/var/tmp,/var/spool,/var/lib/libvirt/images,/var/lib/machines}
 mount -o ssd,noatime,space_cache=v2,autodefrag,compress=zstd:15,discard=async,nodev,nosuid,subvol=@/root $BTRFS /mnt/root
 mount -o ssd,noatime,space_cache=v2,autodefrag,compress=zstd:15,discard=async,nodev,nosuid,subvol=@/home $BTRFS /mnt/home
 mount -o ssd,noatime,space_cache=v2,autodefrag,compress=zstd:15,discard=async,subvol=@/.snapshots $BTRFS /mnt/.snapshots
@@ -196,15 +225,13 @@ mount -o ssd,noatime,space_cache=v2,autodefrag,compress=zstd:15,discard=async,no
 mount -o ssd,noatime,space_cache=v2,autodefrag,compress=zstd:15,discard=async,nodatacow,nodev,nosuid,noexec,subvol=@/var_lib_machines $BTRFS /mnt/var/lib/machines
 
 # The encryption is splitted as we do not want to include it in the backup with snap-pac.
-mount -o ssd,noatime,space_cache=v2,autodefrag,compress=zstd:15,discard=async,nodatacow,nodev,nosuid,noexec,subvol=@/cryptkey $BTRFS /mnt/cryptkey
 
-mkdir -p /mnt/boot/efi
-mount -o nodev,nosuid,noexec $ESP /mnt/boot/efi
+mount "$ESP" /mnt/boot/
 
 
 # Pacstrap (setting up a base sytem onto the new root).
 echo "Installing the base system (it may take a while)."
-pacstrap /mnt base ${kernel} ${microcode} linux-firmware grub grub-btrfs snapper snap-pac efibootmgr sudo networkmanager apparmor python-psutil python-notify2 vim pipewire-pulse pipewire-alsa pipewire-jack flatpak firewalld zram-generator reflector mlocate man-db chrony sbctl
+pacstrap /mnt base ${kernel} ${microcode} linux-firmware grub grub-btrfs snapper snap-pac efibootmgr sudo networkmanager apparmor python-psutil python-notify2 vim pipewire-pulse pipewire-alsa pipewire-jack firewalld zram-generator reflector mlocate man-db chrony sbctl
 
 # Routing jack2 through PipeWire.
 echo "/usr/lib/pipewire-0.3/jack" > /mnt/etc/ld.so.conf.d/pipewire-jack.conf
@@ -240,7 +267,8 @@ sed -i 's,#COMPRESSION="zstd",COMPRESSION="zstd",g' /mnt/etc/mkinitcpio.conf
 sed -i 's,modconf block filesystems keyboard,keyboard modconf block encrypt filesystems,g' /mnt/etc/mkinitcpio.conf
 
 # Enabling LUKS in GRUB and setting the UUID of the LUKS container.
-UUID=$(blkid $cryptroot | cut -f2 -d'"')
+# UUID=$(blkid $cryptroot | cut -f2 -d'"')
+UUID=$(blkid -s UUID -o value $CRYPTROOT)
 sed -i 's/#\(GRUB_ENABLE_CRYPTODISK=y\)/\1/' /mnt/etc/default/grub
 echo "" >> /mnt/etc/default/grub
 echo -e "# Booting with BTRFS subvolume\nGRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION=true" -o /mnt/etc/default/grub
@@ -263,11 +291,11 @@ sed -i 's#rootflags=subvol=${rootsubvol}##g' /mnt/etc/grub.d/20_linux_xen
 # chmod 755 /mnt/etc/grub.d/*
 
 # Adding keyfile to the initramfs to avoid double password.
-dd bs=512 count=4 if=/dev/random of=/mnt/cryptkey/.root.key iflag=fullblock &>/dev/null
-chmod 000 /mnt/cryptkey/.root.key &>/dev/null
-cryptsetup -v luksAddKey /dev/disk/by-partlabel/cryptroot /mnt/cryptkey/.root.key
-sed -i "s#quiet#cryptdevice=UUID=$UUID:cryptroot root=$BTRFS lsm=landlock,lockdown,yama,apparmor,bpf cryptkey=rootfs:/cryptkey/.root.key#g" /mnt/etc/default/grub
-sed -i 's#FILES=()#FILES=(/cryptkey/.root.key)#g' /mnt/etc/mkinitcpio.conf
+# dd bs=512 count=4 if=/dev/random of=/mnt/cryptkey/.root.key iflag=fullblock &>/dev/null
+# chmod 000 /mnt/cryptkey/.root.key &>/dev/null
+# cryptsetup -v luksAddKey /dev/disk/by-partlabel/cryptroot /mnt/cryptkey/.root.key
+sed -i "s#quiet#cryptdevice=UUID=$UUID:cryptroot root=$BTRFS lsm=landlock,lockdown,yama,apparmor,bpf#g" /mnt/etc/default/grub
+# sed -i 's#FILES=()#FILES=(/cryptkey/.root.key)#g' /mnt/etc/mkinitcpio.conf
 
 # Configure AppArmor Parser caching
 sed -i 's/#write-cache/write-cache/g' /mnt/etc/apparmor/parser.conf
@@ -359,7 +387,7 @@ arch-chroot /mnt /bin/bash -e <<EOF
 
     # Installing GRUB.
     echo "Installing GRUB on /boot."
-    grub-install --target=x86_64-efi --removable --efi-directory=/boot/efi --bootloader-id=GRUB --modules="normal test efi_gop efi_uga search echo linux all_video gfxmenu gfxterm_background gfxterm_menu gfxterm loadenv configfile gzio part_gpt cryptodisk luks gcry_rijndael gcry_sha256 btrfs" --disable-shim-lock &>/dev/null
+    grub-install --target=x86_64-efi --removable --efi-directory=/boot/ --bootloader-id=GRUB --modules="normal test efi_gop efi_uga search echo linux all_video gfxmenu gfxterm_background gfxterm_menu gfxterm loadenv configfile gzio part_gpt cryptodisk luks gcry_rijndael gcry_sha256 btrfs" --disable-shim-lock &>/dev/null
 
     # Creating grub config file.
     echo "Creating GRUB config file."
