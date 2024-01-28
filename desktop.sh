@@ -420,11 +420,11 @@ systemctl enable firewalld --root=/mnt &>/dev/null
 
 # Enabling Bluetooth Service (This is only to fix the visual glitch with gnome where it gets stuck in the menu at the top right).
 # IF YOU WANT TO USE BLUETOOTH, YOU MUST REMOVE IT FROM THE LIST OF BLACKLISTED KERNEL MODULES IN /mnt/etc/modprobe.d/30_security-misc.conf
-systemctl enable bluetooth --root=/mnt &>/dev/null
+# systemctl enable bluetooth --root=/mnt &>/dev/null
 
 # Enabling Reflector timer.
 echo "Enabling Reflector."
-systemctl enable reflector.timer --root=/mnt &>/dev/null
+# systemctl enable reflector.timer --root=/mnt &>/dev/null
 
 # Enabling systemd-oomd.
 echo "Enabling systemd-oomd."
@@ -440,7 +440,7 @@ systemctl enable chronyd --root=/mnt &>/dev/null
 echo "Enabling Snapper and automatic snapshots entries."
 systemctl enable snapper-timeline.timer --root=/mnt &>/dev/null
 systemctl enable snapper-cleanup.timer --root=/mnt &>/dev/null
-systemctl enable grub-btrfs.path --root=/mnt &>/dev/null
+# systemctl enable grub-btrfs.path --root=/mnt &>/dev/null
 
 # Setting umask to 077.
 sed -i 's/022/077/g' /mnt/etc/profile
