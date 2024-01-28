@@ -110,7 +110,7 @@ mkfs.fat -F 32 -s 2 $ESP &>/dev/null
 
 # Creating a LUKS Container for the root partition.
 echo "Creating LUKS Container for the root partition."
-cryptsetup luksFormat --type luks1 $cryptroot
+cryptsetup luksFormat --hash sha512 $cryptroot
 echo "Opening the newly created LUKS Container."
 cryptsetup open $cryptroot cryptroot
 BTRFS="/dev/mapper/cryptroot"
@@ -212,7 +212,7 @@ mount -o nodev,nosuid,noexec $ESP /mnt/boot/efi
 
 # Pacstrap (setting up a base sytem onto the new root).
 echo "Installing the base system (it may take a while)."
-pacstrap /mnt base ${kernel} ${microcode} linux-firmware grub grub-btrfs snapper snap-pac efibootmgr sudo networkmanager apparmor python-psutil python-notify2 nano gdm gnome-control-center gnome-terminal gnome-tweaks nautilus pipewire-pulse pipewire-alsa pipewire-jack flatpak firewalld zram-generator adobe-source-han-sans-otc-fonts adobe-source-han-serif-otc-fonts gnu-free-fonts reflector mlocate man-db chrony sbctl
+pacstrap /mnt base ${kernel} ${microcode} linux-firmware base-devel grub-btrfs snapper snap-pac efibootmgr sudo networkmanager apparmor python-psutil python-notify2 nano gdm gnome-control-center gnome-terminal gnome-tweaks nautilus pipewire-pulse pipewire-alsa pipewire-jack flatpak firewalld zram-generator adobe-source-han-sans-otc-fonts adobe-source-han-serif-otc-fonts gnu-free-fonts reflector mlocate man-db chrony sbctl
 
 # Routing jack2 through PipeWire.
 echo "/usr/lib/pipewire-0.3/jack" > /mnt/etc/ld.so.conf.d/pipewire-jack.conf
@@ -350,6 +350,11 @@ arch-chroot /mnt /bin/bash -e <<EOF
     # Generating locales.my keys aren't even on
     echo "Generating locales."
     locale-gen &>/dev/null
+
+		#Installing grub-improved-luks2-git
+		git clone https://aur.archlinux.org/grub-improved-luks2-git.git
+		cd grub-improved-luks2-git
+		makepkg --syncdeps --install
 
     # Generating a new initramfs.
     echo "Creating a new initramfs."
